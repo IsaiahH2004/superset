@@ -80,6 +80,7 @@ export type EchartsTimeseriesFormData = QueryFormData & {
   maxMarkerSize?: number;
   minMarkerSize?: number;
   metrics: QueryFormMetric[];
+  tooltipMetrics?: QueryFormMetric[];
   minorSplitLine: boolean;
   minorTicks: boolean;
   gridlines: boolean;
