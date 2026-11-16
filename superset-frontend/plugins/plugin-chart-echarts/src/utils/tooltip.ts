@@ -21,8 +21,10 @@ import type { CallbackDataParams } from 'echarts/types/src/util/types';
 import {
   QueryFormColumn,
   QueryFormMetric,
+  ensureIsArray,
   getColumnLabel,
   getMetricLabel,
+  removeDuplicates,
 } from '@superset-ui/core';
 import {
   TOOLTIP_OVERFLOW_MARGIN,
@@ -168,4 +170,29 @@ export function getTooltipLabels({
     ...(tooltipMetrics ?? []).map(v => getMetricLabel(v)),
     ...(tooltipColumns ?? []).map(v => getColumnLabel(v)),
   ];
+}
+
+/**
+ * Returns the tooltip metrics that aren't already in `plottedMetrics`,
+ * without repeats, in the order they were picked. Metrics are compared by
+ * label because the label is the metric's column name in the query, so two
+ * metrics with the same label can't both be queried.
+ */
+export function getTooltipOnlyMetrics({
+  plottedMetrics,
+  tooltipMetrics,
+}: {
+  plottedMetrics?: QueryFormMetric[] | null;
+  tooltipMetrics?: QueryFormMetric[] | null;
+}): QueryFormMetric[] {
+  const plottedLabels = new Set(
+    ensureIsArray(plottedMetrics).map(getMetricLabel),
+  );
+
+  return removeDuplicates(
+    ensureIsArray(tooltipMetrics).filter(
+      metric => !plottedLabels.has(getMetricLabel(metric)),
+    ),
+    getMetricLabel,
+  );
 }
