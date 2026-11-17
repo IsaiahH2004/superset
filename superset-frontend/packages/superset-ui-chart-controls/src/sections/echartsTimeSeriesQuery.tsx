@@ -27,6 +27,7 @@ import {
 
 const controlsWithoutXAxis: ControlSetRow[] = [
   ['metrics'],
+  ['tooltip_metrics'],
   ['groupby'],
   [contributionModeControl],
   ['adhoc_filters'],
