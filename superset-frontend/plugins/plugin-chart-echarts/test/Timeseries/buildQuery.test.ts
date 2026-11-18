@@ -259,3 +259,49 @@ describe('queryObject conversion', () => {
     });
   });
 });
+
+const tooltipFormData = {
+  datasource: '5__table',
+  granularity_sqla: 'ds',
+  metrics: ['bar'],
+  viz_type: 'my_chart',
+};
+
+test('should query tooltip-only metrics after the plotted metrics', () => {
+  const [query] = buildQuery({
+    ...tooltipFormData,
+    tooltip_metrics: ['qux'],
+  }).queries;
+  expect(query.metrics).toEqual(['bar', 'qux']);
+});
+
+test('should not query a tooltip metric twice when it is plotted or picked again', () => {
+  const [query] = buildQuery({
+    ...tooltipFormData,
+    tooltip_metrics: ['bar', 'qux', 'qux'],
+  }).queries;
+  expect(query.metrics).toEqual(['bar', 'qux']);
+});
+
+test('should not query a tooltip metric twice when it is the sort-only metric', () => {
+  const [query] = buildQuery({
+    ...tooltipFormData,
+    metrics: ['count'],
+    x_axis: 'genre',
+    groupby: ['platform'],
+    timeseries_limit_metric: 'na_sales',
+    x_axis_sort: 'na_sales',
+    x_axis_sort_asc: false,
+    tooltip_metrics: ['na_sales', 'qux'],
+  }).queries;
+  expect(query.metrics).toEqual(['count', 'na_sales', 'qux']);
+});
+
+test('should leave the query unchanged when no tooltip metrics are picked', () => {
+  const [withoutTooltip] = buildQuery(tooltipFormData).queries;
+  const [withEmptyTooltip] = buildQuery({
+    ...tooltipFormData,
+    tooltip_metrics: [],
+  }).queries;
+  expect(withEmptyTooltip).toEqual(withoutTooltip);
+});
