@@ -358,3 +358,18 @@ test('should apply rolling, comparison and rename to the plotted metrics only', 
     withoutPivot({ ...chartFormData, tooltip_metrics: [] }),
   );
 });
+
+test('should limit the contribution to the plotted metrics when tooltip-only metrics are picked', () => {
+  const [query] = buildQuery({
+    ...groupedTooltipFormData,
+    contributionMode: 'row',
+  }).queries;
+  const contribution = (query.post_processing || []).find(
+    operator => operator?.operation === 'contribution',
+  );
+  expect(contribution?.options).toEqual({
+    orientation: 'row',
+    time_shifts: [],
+    columns: ['count'],
+  });
+});
