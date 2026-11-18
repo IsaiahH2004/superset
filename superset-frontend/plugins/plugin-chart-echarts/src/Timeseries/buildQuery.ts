@@ -81,12 +81,21 @@ export default function buildQuery(formData: QueryFormData) {
       tooltipMetrics: formData.tooltip_metrics,
     });
 
+    // Only the pivot sees the tooltip-only metrics, so their columns (and, with
+    // time comparison, their time-shifted columns) reach the chart. Rolling,
+    // comparison and rename keep using the plotted metrics, so tooltip-only
+    // values stay raw and the plotted series keep their names.
+    const pivotQueryObject = {
+      ...baseQueryObject,
+      metrics: [...(baseQueryObject.metrics || []), ...tooltip_only_metrics],
+    };
+
     const pivotOperatorInRuntime: PostProcessingPivot = isTimeComparison(
       formData,
       baseQueryObject,
     )
-      ? timeComparePivotOperator(formData, baseQueryObject)
-      : pivotOperator(formData, baseQueryObject);
+      ? timeComparePivotOperator(formData, pivotQueryObject)
+      : pivotOperator(formData, pivotQueryObject);
 
     const columns = [
       ...(isXAxisSet(formData) ? ensureIsArray(getXAxisColumn(formData)) : []),

@@ -305,3 +305,56 @@ test('should leave the query unchanged when no tooltip metrics are picked', () =
   }).queries;
   expect(withEmptyTooltip).toEqual(withoutTooltip);
 });
+
+const groupedTooltipFormData = {
+  ...tooltipFormData,
+  metrics: ['count'],
+  x_axis: 'genre',
+  groupby: ['platform'],
+  tooltip_metrics: ['qux'],
+};
+
+test('should keep tooltip-only metrics through the pivot', () => {
+  const [query] = buildQuery(groupedTooltipFormData).queries;
+  const pivot = (query.post_processing || []).find(isPostProcessingPivot);
+  expect(pivot?.options).toMatchObject({
+    index: ['genre'],
+    columns: ['platform'],
+    aggregates: {
+      count: { operator: 'mean' },
+      qux: { operator: 'mean' },
+    },
+  });
+});
+
+test('should keep tooltip-only metrics and their time shifts through the time comparison pivot', () => {
+  const [query] = buildQuery({
+    ...groupedTooltipFormData,
+    comparison_type: 'values',
+    time_compare: ['1 week ago'],
+  }).queries;
+  const pivot = (query.post_processing || []).find(isPostProcessingPivot);
+  expect(Object.keys(pivot?.options.aggregates ?? {}).sort()).toEqual([
+    'count',
+    'count__1 week ago',
+    'qux',
+    'qux__1 week ago',
+  ]);
+});
+
+test('should apply rolling, comparison and rename to the plotted metrics only', () => {
+  const chartFormData = {
+    ...groupedTooltipFormData,
+    rolling_type: 'cumsum',
+    comparison_type: 'difference',
+    time_compare: ['1 week ago'],
+    truncate_metric: true,
+  };
+  const withoutPivot = (formData: typeof chartFormData) =>
+    (buildQuery(formData).queries[0].post_processing || []).filter(
+      operator => operator?.operation !== 'pivot',
+    );
+  expect(withoutPivot(chartFormData)).toEqual(
+    withoutPivot({ ...chartFormData, tooltip_metrics: [] }),
+  );
+});
