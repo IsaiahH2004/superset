@@ -40,6 +40,7 @@ import {
   timeComparePivotOperator,
   timeCompareOperator,
 } from '@superset-ui/chart-controls';
+import { getTooltipOnlyMetrics } from '../utils/tooltip';
 
 export default function buildQuery(formData: QueryFormData) {
   const { groupby } = formData;
@@ -73,13 +74,28 @@ export default function buildQuery(formData: QueryFormData) {
     const extra_metrics = extractExtraMetrics(formData).filter(
       metric => !queriedMetricLabels.has(getMetricLabel(metric)),
     );
+    // metrics picked for the tooltip only: queried alongside the plotted
+    // metrics but never drawn, skipping any that are already queried
+    const tooltip_only_metrics = getTooltipOnlyMetrics({
+      plottedMetrics: [...(baseQueryObject.metrics || []), ...extra_metrics],
+      tooltipMetrics: formData.tooltip_metrics,
+    });
+
+    // Only the pivot sees the tooltip-only metrics, so their columns (and, with
+    // time comparison, their time-shifted columns) reach the chart. Rolling,
+    // comparison and rename keep using the plotted metrics, so tooltip-only
+    // values stay raw and the plotted series keep their names.
+    const pivotQueryObject = {
+      ...baseQueryObject,
+      metrics: [...(baseQueryObject.metrics || []), ...tooltip_only_metrics],
+    };
 
     const pivotOperatorInRuntime: PostProcessingPivot = isTimeComparison(
       formData,
       baseQueryObject,
     )
-      ? timeComparePivotOperator(formData, baseQueryObject)
-      : pivotOperator(formData, baseQueryObject);
+      ? timeComparePivotOperator(formData, pivotQueryObject)
+      : pivotOperator(formData, pivotQueryObject);
 
     const columns = [
       ...(isXAxisSet(formData) ? ensureIsArray(getXAxisColumn(formData)) : []),
@@ -98,7 +114,11 @@ export default function buildQuery(formData: QueryFormData) {
     return [
       {
         ...baseQueryObject,
-        metrics: [...(baseQueryObject.metrics || []), ...extra_metrics],
+        metrics: [
+          ...(baseQueryObject.metrics || []),
+          ...extra_metrics,
+          ...tooltip_only_metrics,
+        ],
         columns,
         series_columns: groupby,
         ...(isXAxisSet(formData) ? {} : { is_timeseries: true }),

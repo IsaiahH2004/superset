@@ -33,19 +33,21 @@ import {
 
 /**
  * Labels of the displayed metric columns present when the contribution runs,
- * i.e. every pivoted column except the sort-only "Sort By" metric (see
- * `extractExtraMetrics`). Row contribution divides by the sum of all numeric
- * columns, so the hidden metric must be left out of the calculation.
+ * i.e. every pivoted column except the hidden ones: the sort-only "Sort By"
+ * metric (see `extractExtraMetrics`) and any tooltip-only metric. Row
+ * contribution divides by the sum of all numeric columns, so hidden metrics
+ * must be left out of the calculation, which also keeps their raw values.
  */
 const getContributionColumns = (
   formData: QueryFormData,
   queryObject: QueryObject,
 ): string[] | undefined => {
   const metricLabels = ensureIsArray(queryObject.metrics).map(getMetricLabel);
-  const hasSortOnlyMetric = extractExtraMetrics(formData).some(
-    metric => !metricLabels.includes(getMetricLabel(metric)),
-  );
-  if (!hasSortOnlyMetric) {
+  const hasHiddenMetric = [
+    ...extractExtraMetrics(formData),
+    ...ensureIsArray(formData.tooltip_metrics),
+  ].some(metric => !metricLabels.includes(getMetricLabel(metric)));
+  if (!hasHiddenMetric) {
     return undefined;
   }
   if (!isTimeComparison(formData, queryObject)) {
