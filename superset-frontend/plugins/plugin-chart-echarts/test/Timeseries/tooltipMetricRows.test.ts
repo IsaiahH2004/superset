@@ -59,14 +59,8 @@ test('returns multiple tooltip rows in metric selection order and preserves zero
     { key: 'margin', label: 'Margin', format: value => `${value}%` },
   ];
   const values: TooltipValues = new Map([
-    [
-      'quantity',
-      new Map([['|East', new Map([[String(xValue), 0]])]]),
-    ],
-    [
-      'margin',
-      new Map([['|East', new Map([[String(xValue), 12.5]])]]),
-    ],
+    ['quantity', new Map([['|East', new Map([[String(xValue), 0]])]])],
+    ['margin', new Map([['|East', new Map([[String(xValue), 12.5]])]])],
   ]);
 
   expect(getTooltipMetricRows(specs, values, '|East', xValue)).toEqual([
@@ -126,10 +120,7 @@ test('formats the original lookup value instead of a contribution percentage', (
     },
   });
   const values: TooltipValues = new Map([
-    [
-      'revenue',
-      new Map([['|East', new Map([[String(xValue), 1250]])]]),
-    ],
+    ['revenue', new Map([['|East', new Map([[String(xValue), 1250]])]])],
   ]);
 
   const rows = getTooltipMetricRows(specs, values, '|East', xValue);
