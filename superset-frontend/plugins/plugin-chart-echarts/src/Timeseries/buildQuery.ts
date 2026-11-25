@@ -81,13 +81,23 @@ export default function buildQuery(formData: QueryFormData) {
       tooltipMetrics: formData.tooltip_metrics,
     });
 
-    // Only the pivot sees the tooltip-only metrics, so their columns (and, with
+    // Only the pivot sees the tooltip metrics, so their columns (and, with
     // time comparison, their time-shifted columns) reach the chart. Rolling,
     // comparison and rename keep using the plotted metrics, so tooltip-only
     // values stay raw and the plotted series keep their names.
+    // Unlike the query, the pivot skips only the plotted metrics here: a
+    // tooltip metric that is also the sort-only metric is queried once, but
+    // still needs its time-shifted columns, which the time comparison pivot
+    // otherwise drops for the sort-only metric.
     const pivotQueryObject = {
       ...baseQueryObject,
-      metrics: [...(baseQueryObject.metrics || []), ...tooltip_only_metrics],
+      metrics: [
+        ...(baseQueryObject.metrics || []),
+        ...getTooltipOnlyMetrics({
+          plottedMetrics: baseQueryObject.metrics || [],
+          tooltipMetrics: formData.tooltip_metrics,
+        }),
+      ],
     };
 
     const pivotOperatorInRuntime: PostProcessingPivot = isTimeComparison(

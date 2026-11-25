@@ -373,3 +373,47 @@ test('should limit the contribution to the plotted metrics when tooltip-only met
     columns: ['count'],
   });
 });
+
+test('should keep the time-shifted column of a tooltip metric that is also the sort-only metric', () => {
+  const [query] = buildQuery({
+    ...tooltipFormData,
+    metrics: ['count'],
+    x_axis: 'genre',
+    groupby: ['platform'],
+    timeseries_limit_metric: 'na_sales',
+    x_axis_sort: 'na_sales',
+    x_axis_sort_asc: false,
+    tooltip_metrics: ['na_sales'],
+    comparison_type: 'values',
+    time_compare: ['1 year ago'],
+  }).queries;
+  // queried once, as the sort-only metric
+  expect(query.metrics).toEqual(['count', 'na_sales']);
+  const pivot = (query.post_processing || []).find(isPostProcessingPivot);
+  expect(Object.keys(pivot?.options.aggregates ?? {}).sort()).toEqual([
+    'count',
+    'count__1 year ago',
+    'na_sales',
+    'na_sales__1 year ago',
+  ]);
+});
+
+test('should still drop the time-shifted column of a sort-only metric that is not a tooltip metric', () => {
+  const [query] = buildQuery({
+    ...tooltipFormData,
+    metrics: ['count'],
+    x_axis: 'genre',
+    groupby: ['platform'],
+    timeseries_limit_metric: 'na_sales',
+    x_axis_sort: 'na_sales',
+    x_axis_sort_asc: false,
+    comparison_type: 'values',
+    time_compare: ['1 year ago'],
+  }).queries;
+  const pivot = (query.post_processing || []).find(isPostProcessingPivot);
+  expect(Object.keys(pivot?.options.aggregates ?? {}).sort()).toEqual([
+    'count',
+    'count__1 year ago',
+    'na_sales',
+  ]);
+});
