@@ -25,6 +25,7 @@ import {
   normalizeOrderBy,
   PostProcessingPivot,
   QueryFormData,
+  removeDuplicates,
 } from '@superset-ui/core';
 import {
   contributionOperator,
@@ -74,30 +75,23 @@ export default function buildQuery(formData: QueryFormData) {
     const extra_metrics = extractExtraMetrics(formData).filter(
       metric => !queriedMetricLabels.has(getMetricLabel(metric)),
     );
-    // metrics picked for the tooltip only: queried alongside the plotted
-    // metrics but never drawn, skipping any that are already queried
+    // metrics picked for the tooltip only: shown in the tooltip but never
+    // drawn, skipping any that are already plotted
     const tooltip_only_metrics = getTooltipOnlyMetrics({
-      plottedMetrics: [...(baseQueryObject.metrics || []), ...extra_metrics],
+      plottedMetrics: baseQueryObject.metrics || [],
       tooltipMetrics: formData.tooltip_metrics,
     });
 
-    // Only the pivot sees the tooltip metrics, so their columns (and, with
-    // time comparison, their time-shifted columns) reach the chart. Rolling,
-    // comparison and rename keep using the plotted metrics, so tooltip-only
-    // values stay raw and the plotted series keep their names.
-    // Unlike the query, the pivot skips only the plotted metrics here: a
-    // tooltip metric that is also the sort-only metric is queried once, but
-    // still needs its time-shifted columns, which the time comparison pivot
+    // Only the pivot sees the tooltip-only metrics, so their columns (and,
+    // with time comparison, their time-shifted columns) reach the chart.
+    // Rolling, comparison and rename keep using the plotted metrics, so
+    // tooltip-only values stay raw and the plotted series keep their names.
+    // This includes a tooltip metric that is also the sort-only metric, which
+    // still needs its time-shifted columns that the time comparison pivot
     // otherwise drops for the sort-only metric.
     const pivotQueryObject = {
       ...baseQueryObject,
-      metrics: [
-        ...(baseQueryObject.metrics || []),
-        ...getTooltipOnlyMetrics({
-          plottedMetrics: baseQueryObject.metrics || [],
-          tooltipMetrics: formData.tooltip_metrics,
-        }),
-      ],
+      metrics: [...(baseQueryObject.metrics || []), ...tooltip_only_metrics],
     };
 
     const pivotOperatorInRuntime: PostProcessingPivot = isTimeComparison(
@@ -124,11 +118,15 @@ export default function buildQuery(formData: QueryFormData) {
     return [
       {
         ...baseQueryObject,
-        metrics: [
-          ...(baseQueryObject.metrics || []),
-          ...extra_metrics,
-          ...tooltip_only_metrics,
-        ],
+        // a tooltip metric that is also the sort-only metric is queried once
+        metrics: removeDuplicates(
+          [
+            ...(baseQueryObject.metrics || []),
+            ...extra_metrics,
+            ...tooltip_only_metrics,
+          ],
+          getMetricLabel,
+        ),
         columns,
         series_columns: groupby,
         ...(isXAxisSet(formData) ? {} : { is_timeseries: true }),
