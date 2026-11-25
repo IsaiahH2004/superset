@@ -416,3 +416,61 @@ test('should remove renameOperator', () => {
     ),
   ).toEqual(undefined);
 });
+
+test('should not collide a tooltip-only metric labeled like a time offset with the renamed metric column', () => {
+  // The tooltip-only metric "1 year ago" keeps its own column of that name,
+  // so renaming `count(*)__1 year ago` to the bare offset label would make
+  // the backend `rename` fail with "Label already exists".
+  expect(
+    renameOperator(
+      {
+        ...formData,
+        comparison_type: ComparisonType.Values,
+        time_compare: ['1 year ago'],
+        tooltip_metrics: ['1 year ago'],
+      },
+      queryObject,
+    ),
+  ).toEqual(undefined);
+});
+
+test('should not collide a tooltip-only metric labeled like a time offset with a derived comparison column', () => {
+  [
+    ComparisonType.Difference,
+    ComparisonType.Percentage,
+    ComparisonType.Ratio,
+  ].forEach(type => {
+    expect(
+      renameOperator(
+        {
+          ...formData,
+          comparison_type: type,
+          time_compare: ['1 year ago'],
+          tooltip_metrics: ['1 year ago'],
+        },
+        queryObject,
+      ),
+    ).toEqual(undefined);
+  });
+});
+
+test('should keep the displayed series names when a tooltip-only metric is added', () => {
+  expect(
+    renameOperator(
+      {
+        ...formData,
+        comparison_type: ComparisonType.Values,
+        time_compare: ['1 year ago'],
+        tooltip_metrics: ['sum(sales)'],
+      },
+      queryObject,
+    ),
+  ).toEqual({
+    operation: 'rename',
+    options: {
+      columns: { 'count(*)__1 year ago': '1 year ago' },
+      inplace: true,
+      level: 0,
+    },
+  });
+});
