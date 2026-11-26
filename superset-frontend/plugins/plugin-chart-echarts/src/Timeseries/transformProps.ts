@@ -138,7 +138,11 @@ import {
   TIMEGRAIN_TO_TIMESTAMP,
   TIMESERIES_CONSTANTS,
 } from '../constants';
-import type { TooltipValues } from './tooltipMetricRows';
+import {
+  createTooltipMetricSpecs,
+  getTooltipMetricRows,
+  type TooltipValues,
+} from './tooltipMetricRows';
 import { getDefaultTooltip, getTooltipOnlyMetrics } from '../utils/tooltip';
 import {
   createDedupXAxisFormatter,
@@ -1250,6 +1254,20 @@ export default function transformProps(
     data,
     currencyCodeColumn,
   );
+  // Display label and formatter of each tooltip-only metric, built once since
+  // the tooltip formatter runs on every mousemove. Each metric keeps its own
+  // format, even when the plotted values are shown as percentages.
+  const tooltipMetricSpecs = createTooltipMetricSpecs({
+    tooltipMetrics: tooltipOnlyMetrics,
+    verboseMap,
+    columnFormats,
+    currencyFormats,
+    yAxisFormat,
+    currencyFormat,
+    backendDetectedCurrency,
+    data,
+    currencyCodeColumn,
+  });
 
   const array = ensureIsArray(chartProps.rawFormData?.time_compare);
   const inverted = invert(verboseMap);
@@ -2228,7 +2246,6 @@ export default function transformProps(
           ? percentFormatter
           : (getCustomFormatter(customFormatters, metrics) ?? defaultFormatter);
 
-        const rows: string[][] = [];
         const total = Object.values(filteredForecastValues).reduce(
           (acc, value) =>
             value.observation !== undefined ? acc + value.observation : acc,
@@ -2238,7 +2255,10 @@ export default function transformProps(
         const showPercentage =
           allowTotal && !forcePercentFormatter && showTooltipPercentage;
         const keys = Object.keys(forecastValues);
-        let focusedRow;
+        // Each plotted row is grouped with the tooltip-only rows shown
+        // directly beneath it.
+        const rowGroups: string[][][] = [];
+        let focusedGroup: number | undefined;
         sortedKeys
           .filter(key => keys.includes(key))
           .forEach(key => {
@@ -2267,17 +2287,38 @@ export default function transformProps(
                 percentFormatter.format(value.observation / (total || 1)),
               );
             }
-            rows.push(row);
+            rowGroups.push([
+              row,
+              ...(annotationRow
+                ? []
+                : getTooltipMetricRows(
+                    tooltipMetricSpecs,
+                    tooltipValues,
+                    getSeriesDimsKey(key),
+                    xValue,
+                  )),
+            ]);
             if (key === focusedSeries) {
-              focusedRow = rows.length - 1;
+              focusedGroup = rowGroups.length - 1;
             }
           });
+        // Stacked charts list the topmost series first. Whole groups are
+        // reversed, not single rows, so tooltip-only rows stay beneath their
+        // plotted row.
         if (stack) {
-          rows.reverse();
-          if (focusedRow !== undefined) {
-            focusedRow = rows.length - focusedRow - 1;
+          rowGroups.reverse();
+          if (focusedGroup !== undefined) {
+            focusedGroup = rowGroups.length - focusedGroup - 1;
           }
         }
+        const rows: string[][] = [];
+        let focusedRow: number | undefined;
+        rowGroups.forEach((group, groupIndex) => {
+          if (groupIndex === focusedGroup) {
+            focusedRow = rows.length;
+          }
+          rows.push(...group);
+        });
         if (allowTotal && showTooltipTotal) {
           const totalRow = ['Total', formatter.format(total)];
           if (showPercentage) {
