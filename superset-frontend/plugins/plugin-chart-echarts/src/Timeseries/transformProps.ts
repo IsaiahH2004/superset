@@ -927,20 +927,23 @@ export default function transformProps(
   const sizeIsValueMetric = isDefined(sizeSeriesLabel)
     ? valueMetricLabels.includes(sizeSeriesLabel!)
     : false;
-  // Time-comparison series keep the raw metric label with an `__<offset>`
-  // suffix (verbose mapping only applies to base columns, see
-  // rebaseForecastDatum), so a metric's series can be named `<label>`,
-  // `<label>, <dims>`, `<raw label>__<offset>` or
+  // Verbose mapping only applies to a metric's exact base column (see
+  // rebaseForecastDatum), so pivoted and time-comparison series keep the raw
+  // metric label: a metric's series can be named `<verbose label>`,
+  // `<raw label>, <dims>`, `<raw label>__<offset>` or
   // `<raw label>__<offset>, <dims>`. Given a raw metric label, return the
   // `<offset>|<dims>` key for a series name belonging to that metric, or
   // undefined if the name doesn't belong to it. Keying by offset pairs each
-  // comparison value series with the size series from the same offset.
+  // comparison value series with the size series and the tooltip-only values
+  // from the same offset.
   const matchSeriesKey = (
     name: string,
     rawLabel: string,
   ): string | undefined => {
+    const verboseLabel = verboseMap[rawLabel] ?? rawLabel;
     const candidates = [
-      { label: verboseMap[rawLabel] ?? rawLabel, offset: '' },
+      { label: verboseLabel, offset: '' },
+      ...(verboseLabel !== rawLabel ? [{ label: rawLabel, offset: '' }] : []),
       ...timeCompareOffsets.map(offset => ({
         label: `${rawLabel}__${offset}`,
         offset,
@@ -1026,10 +1029,50 @@ export default function transformProps(
       sizeExtent = [sizeMin, sizeMax];
     }
   }
+  // The dimension values of a series, read from its `label_map` tuple, whose
+  // trailing parts are always the dimension values.
+  const getSeriesDims = (name: string): string[] =>
+    groupBy.length > 0 ? (labelMap[name] ?? []).slice(-groupBy.length) : [];
+  // `renameOperator` renames a plotted metric's comparison series to
+  // `<offset>[, <dims>]` when a single metric is plotted, and to
+  // `<metric>, <offset>[, <dims>]` when several are, so neither carries the
+  // `<metric>__<offset>` form matchSeriesKey reads. Return the offset of such
+  // a renamed comparison series, or undefined for any other series. Only
+  // series recorded in `derivedComparisonSeries` are considered, so a base
+  // series whose dimension value reads like an offset is never mistaken for
+  // one.
+  const getRenamedComparisonOffset = (name: string): string | undefined => {
+    if (!derivedComparisonSeries.has(name)) {
+      return undefined;
+    }
+    const dims = getSeriesDims(name);
+    const dimsSuffix = dims.length ? `, ${dims.join(', ')}` : '';
+    const leading =
+      dimsSuffix && name.endsWith(dimsSuffix)
+        ? name.slice(0, -dimsSuffix.length)
+        : name;
+    // longest first, so an offset that ends another offset's label can't
+    // shadow it
+    return [...timeCompareOffsets]
+      .sort((a, b) => b.length - a.length)
+      .find(
+        offset =>
+          leading === offset ||
+          leading.endsWith(`, ${offset}`) ||
+          // a renamed label that would collide with a metric's own label keeps
+          // the `<metric>__<offset>` column name instead
+          leading.endsWith(`__${offset}`),
+      );
+  };
   // Strips the metric label off a series name, leaving the `<offset>|<dims>`
-  // key used to match a value series with its size series.
+  // key used to match a value series with its size series and with the
+  // tooltip-only values of the same dimensions and time offset.
   const rawValueMetricLabels = ensureIsArray(metrics).map(getMetricLabel);
   const getSeriesDimsKey = (name: string): string => {
+    const renamedOffset = getRenamedComparisonOffset(name);
+    if (renamedOffset !== undefined) {
+      return `${renamedOffset}|${getSeriesDims(name).join(', ')}`;
+    }
     for (const rawLabel of rawValueMetricLabels) {
       const key = matchSeriesKey(name, rawLabel);
       if (key !== undefined) {
