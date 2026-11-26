@@ -137,7 +137,7 @@ import {
   TIMEGRAIN_TO_TIMESTAMP,
   TIMESERIES_CONSTANTS,
 } from '../constants';
-import { getDefaultTooltip } from '../utils/tooltip';
+import { getDefaultTooltip, getTooltipOnlyMetrics } from '../utils/tooltip';
 import {
   createDedupXAxisFormatter,
   createSpacedXAxisFormatter,
@@ -451,6 +451,7 @@ export default function transformProps(
     timeShiftColor,
     stack,
     tooltipTimeFormat,
+    tooltipMetrics,
     tooltipSortByMetric,
     showTooltipTotal,
     showTooltipPercentage,
@@ -620,6 +621,53 @@ export default function transformProps(
       ? getMetricLabel(size)
       : undefined;
   const extraMetrics = extractExtraMetrics(chartProps.rawFormData);
+  // Metrics picked for the tooltip that aren't plotted. Their columns are
+  // queried alongside the plotted metrics, but are only shown in the tooltip.
+  // Raw labels are kept because they match the data's column names and the
+  // keys of the tooltip value lookup.
+  const tooltipOnlyMetrics = getTooltipOnlyMetrics({
+    plottedMetrics: metrics,
+    tooltipMetrics,
+  });
+  const tooltipOnlyMetricLabels = tooltipOnlyMetrics.map(getMetricLabel);
+  const timeCompareOffsets = ensureIsArray(timeCompare).map(String);
+  // Whether a data column holds values of the metric with the given raw
+  // label: its own column (renamed to its verbose name when one is set, see
+  // rebaseForecastDatum) or, with dimensions, a pivoted `<metric>, <dims>`
+  // column; a time-shifted `<metric>__<offset>` column; or a forecast column
+  // of any of those. With dimensions the column is resolved through
+  // `label_map` so a displayed series whose dimension value reads like the
+  // metric label is never mistaken for one of the metric's columns.
+  const belongsToMetric = (column: string, rawLabel: string): boolean => {
+    const { name } = extractForecastSeriesContext(column);
+    const metricParts = [
+      rawLabel,
+      ...timeCompareOffsets.map(offset => `${rawLabel}__${offset}`),
+    ];
+    if (groupBy.length === 0) {
+      return (
+        name === (verboseMap[rawLabel] ?? rawLabel) ||
+        metricParts.includes(name)
+      );
+    }
+    const parts = labelMap[column];
+    return (
+      parts?.length === groupBy.length + 1 && metricParts.includes(parts[0])
+    );
+  };
+  // Tooltip-only columns are never plotted: listing them with the hidden
+  // sort-only columns keeps them out of the series, legend, stacking and
+  // totals. A tooltip metric that also sizes scatter dots stays in the
+  // extracted series, since the size lookup reads it from there.
+  const tooltipOnlyColumns = [
+    ...new Set(rebasedData.flatMap(row => Object.keys(row))),
+  ].filter(
+    column =>
+      column !== xAxisLabel &&
+      tooltipOnlyMetricLabels.some(
+        label => label !== sizeMetricLabel && belongsToMetric(column, label),
+      ),
+  );
   const extraMetricLabels = extraMetrics.map(getMetricLabel).flatMap(label =>
     label === sizeMetricLabel
       ? []
@@ -637,6 +685,7 @@ export default function transformProps(
           ...pivotedColumnsOf(label, { includeForecast: true }),
         ],
   );
+  extraMetricLabels.push(...tooltipOnlyColumns);
   const { totalStackedValues, thresholdValues } = extractDataTotalValues(
     rebasedData,
     {
@@ -886,7 +935,6 @@ export default function transformProps(
   // `<offset>|<dims>` key for a series name belonging to that metric, or
   // undefined if the name doesn't belong to it. Keying by offset pairs each
   // comparison value series with the size series from the same offset.
-  const timeCompareOffsets = ensureIsArray(timeCompare).map(String);
   const matchSeriesKey = (
     name: string,
     rawLabel: string,
