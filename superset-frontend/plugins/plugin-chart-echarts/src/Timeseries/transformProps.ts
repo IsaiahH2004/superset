@@ -132,11 +132,13 @@ import {
   transformTimeseriesAnnotation,
 } from './transformers';
 import {
+  NULL_STRING,
   OpacityEnum,
   StackControlsValue,
   TIMEGRAIN_TO_TIMESTAMP,
   TIMESERIES_CONSTANTS,
 } from '../constants';
+import type { TooltipValues } from './tooltipMetricRows';
 import { getDefaultTooltip, getTooltipOnlyMetrics } from '../utils/tooltip';
 import {
   createDedupXAxisFormatter,
@@ -1081,6 +1083,62 @@ export default function transformProps(
     }
     return `|${name}`;
   };
+  // The original value of every tooltip-only metric, looked up by raw metric
+  // label, then `<offset>|<dims>` series key (see getSeriesDimsKey), then
+  // `String(<x-axis value>)`. Values are read before the percent-change
+  // rebase, so the tooltip always shows the metric's own numbers. Forecast
+  // trend and bounds are left out, and null and non-finite values are
+  // skipped while zeros are kept.
+  const tooltipXAxisColumn = xAxisLabel || DTTM_ALIAS;
+  const tooltipColumnKeys = new Map<
+    string,
+    { label: string; seriesKey: string }
+  >();
+  new Set(forecastRebasedData.flatMap(row => Object.keys(row))).forEach(
+    column => {
+      if (
+        column === tooltipXAxisColumn ||
+        extractForecastSeriesContext(column).type !==
+          ForecastSeriesEnum.Observation
+      ) {
+        return;
+      }
+      const label = tooltipOnlyMetricLabels.find(candidate =>
+        belongsToMetric(column, candidate),
+      );
+      const seriesKey =
+        label === undefined ? undefined : matchSeriesKey(column, label);
+      if (label !== undefined && seriesKey !== undefined) {
+        tooltipColumnKeys.set(column, { label, seriesKey });
+      }
+    },
+  );
+  const tooltipValues: TooltipValues = new Map();
+  forecastRebasedData.forEach(row => {
+    const rawXValue = row[tooltipXAxisColumn];
+    // a null category is plotted as NULL_STRING (see extractSeries), so the
+    // tooltip reports that as its axis value
+    const xKey = String(
+      rawXValue === null && xAxisType === AxisType.Category
+        ? NULL_STRING
+        : rawXValue,
+    );
+    tooltipColumnKeys.forEach(({ label, seriesKey }, column) => {
+      const rawValue = row[column];
+      const value = typeof rawValue === 'bigint' ? Number(rawValue) : rawValue;
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return;
+      }
+      if (!tooltipValues.has(label)) {
+        tooltipValues.set(label, new Map());
+      }
+      const bySeries = tooltipValues.get(label)!;
+      if (!bySeries.has(seriesKey)) {
+        bySeries.set(seriesKey, new Map());
+      }
+      bySeries.get(seriesKey)!.set(xKey, value);
+    });
+  });
   // Normalize the configured dot size range so an inverted min/max still
   // scales larger metric values to larger dots.
   const markerSizeRange: [number, number] =
