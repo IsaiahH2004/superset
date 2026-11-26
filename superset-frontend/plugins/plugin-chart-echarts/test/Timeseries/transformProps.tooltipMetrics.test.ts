@@ -373,7 +373,9 @@ test('skips missing tooltip values and keeps zeros', () => {
     data: [{ ds: X, rev: 10, profit: 0, units: null }],
   });
 
-  const rows = tooltipRows(transformed, [{ seriesName: 'rev', value: [X, 10] }]);
+  const rows = tooltipRows(transformed, [
+    { seriesName: 'rev', value: [X, 10] },
+  ]);
 
   expect(rows).toEqual([
     ['rev', '10'],
@@ -410,7 +412,9 @@ test('shows the original tooltip value when contribution mode is on', () => {
     data: [{ ds: X, a: 0.25, b: 0.75, profit: 1234 }],
   });
 
-  const rows = tooltipRows(transformed, [{ seriesName: 'a', value: [X, 0.25] }]);
+  const rows = tooltipRows(transformed, [
+    { seriesName: 'a', value: [X, 0.25] },
+  ]);
 
   expect(rows[0]).toEqual(['a', '25%']);
   expect(rows[1]).toEqual(['profit', '1.23k']);
@@ -422,7 +426,9 @@ test('does not repeat a tooltip metric that is also plotted', () => {
     data: [{ ds: X, rev: 10 }],
   });
 
-  const rows = tooltipRows(transformed, [{ seriesName: 'rev', value: [X, 10] }]);
+  const rows = tooltipRows(transformed, [
+    { seriesName: 'rev', value: [X, 10] },
+  ]);
 
   expect(seriesNames(transformed)).toEqual(['rev']);
   expect(rows).toEqual([['rev', '10']]);
