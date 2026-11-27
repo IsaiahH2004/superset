@@ -80,13 +80,16 @@ export const renameOperator: PostProcessingFactory<PostProcessingRename> = (
     ) {
       const metricOffsetMap = getMetricOffsetsMap(formData, queryObject);
       const timeOffsets = ensureIsArray(formData.time_compare);
-      // Every metric (displayed or sort-only) keeps its own label at the top
-      // level of the pivot, so a rename target equal to one of them would make
-      // the backend `rename` fail with "Label already exists". Such a column
-      // keeps its unrenamed label instead.
+      // Every metric (displayed, sort-only or tooltip-only) keeps its own
+      // label at the top level of the pivot, so a rename target equal to one
+      // of them would make the backend `rename` fail with "Label already
+      // exists". Such a column keeps its unrenamed label instead. Tooltip-only
+      // metrics are not counted in `metricCountWithExtras`, so adding one does
+      // not change the names of the displayed series.
       const topLevelMetricLabels = new Set([
         ...metrics.map(getMetricLabel),
         ...extraMetricLabels,
+        ...ensureIsArray(formData.tooltip_metrics).map(getMetricLabel),
       ]);
       [...metricOffsetMap.entries()].forEach(
         ([metricWithOffset, metricOnly]) => {

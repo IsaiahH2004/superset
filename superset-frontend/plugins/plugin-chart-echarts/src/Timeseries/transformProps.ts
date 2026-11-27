@@ -132,12 +132,18 @@ import {
   transformTimeseriesAnnotation,
 } from './transformers';
 import {
+  NULL_STRING,
   OpacityEnum,
   StackControlsValue,
   TIMEGRAIN_TO_TIMESTAMP,
   TIMESERIES_CONSTANTS,
 } from '../constants';
-import { getDefaultTooltip } from '../utils/tooltip';
+import {
+  createTooltipMetricSpecs,
+  getTooltipMetricRows,
+  type TooltipValues,
+} from './tooltipMetricRows';
+import { getDefaultTooltip, getTooltipOnlyMetrics } from '../utils/tooltip';
 import {
   createDedupXAxisFormatter,
   createSpacedXAxisFormatter,
@@ -451,6 +457,7 @@ export default function transformProps(
     timeShiftColor,
     stack,
     tooltipTimeFormat,
+    tooltipMetrics,
     tooltipSortByMetric,
     showTooltipTotal,
     showTooltipPercentage,
@@ -620,6 +627,53 @@ export default function transformProps(
       ? getMetricLabel(size)
       : undefined;
   const extraMetrics = extractExtraMetrics(chartProps.rawFormData);
+  // Metrics picked for the tooltip that aren't plotted. Their columns are
+  // queried alongside the plotted metrics, but are only shown in the tooltip.
+  // Raw labels are kept because they match the data's column names and the
+  // keys of the tooltip value lookup.
+  const tooltipOnlyMetrics = getTooltipOnlyMetrics({
+    plottedMetrics: metrics,
+    tooltipMetrics,
+  });
+  const tooltipOnlyMetricLabels = tooltipOnlyMetrics.map(getMetricLabel);
+  const timeCompareOffsets = ensureIsArray(timeCompare).map(String);
+  // Whether a data column holds values of the metric with the given raw
+  // label: its own column (renamed to its verbose name when one is set, see
+  // rebaseForecastDatum) or, with dimensions, a pivoted `<metric>, <dims>`
+  // column; a time-shifted `<metric>__<offset>` column; or a forecast column
+  // of any of those. With dimensions the column is resolved through
+  // `label_map` so a displayed series whose dimension value reads like the
+  // metric label is never mistaken for one of the metric's columns.
+  const belongsToMetric = (column: string, rawLabel: string): boolean => {
+    const { name } = extractForecastSeriesContext(column);
+    const metricParts = [
+      rawLabel,
+      ...timeCompareOffsets.map(offset => `${rawLabel}__${offset}`),
+    ];
+    if (groupBy.length === 0) {
+      return (
+        name === (verboseMap[rawLabel] ?? rawLabel) ||
+        metricParts.includes(name)
+      );
+    }
+    const parts = labelMap[column];
+    return (
+      parts?.length === groupBy.length + 1 && metricParts.includes(parts[0])
+    );
+  };
+  // Tooltip-only columns are never plotted: listing them with the hidden
+  // sort-only columns keeps them out of the series, legend, stacking and
+  // totals. A tooltip metric that also sizes scatter dots stays in the
+  // extracted series, since the size lookup reads it from there.
+  const tooltipOnlyColumns = [
+    ...new Set(rebasedData.flatMap(row => Object.keys(row))),
+  ].filter(
+    column =>
+      column !== xAxisLabel &&
+      tooltipOnlyMetricLabels.some(
+        label => label !== sizeMetricLabel && belongsToMetric(column, label),
+      ),
+  );
   const extraMetricLabels = extraMetrics.map(getMetricLabel).flatMap(label =>
     label === sizeMetricLabel
       ? []
@@ -637,6 +691,7 @@ export default function transformProps(
           ...pivotedColumnsOf(label, { includeForecast: true }),
         ],
   );
+  extraMetricLabels.push(...tooltipOnlyColumns);
   const { totalStackedValues, thresholdValues } = extractDataTotalValues(
     rebasedData,
     {
@@ -878,21 +933,23 @@ export default function transformProps(
   const sizeIsValueMetric = isDefined(sizeSeriesLabel)
     ? valueMetricLabels.includes(sizeSeriesLabel!)
     : false;
-  // Time-comparison series keep the raw metric label with an `__<offset>`
-  // suffix (verbose mapping only applies to base columns, see
-  // rebaseForecastDatum), so a metric's series can be named `<label>`,
-  // `<label>, <dims>`, `<raw label>__<offset>` or
+  // Verbose mapping only applies to a metric's exact base column (see
+  // rebaseForecastDatum), so pivoted and time-comparison series keep the raw
+  // metric label: a metric's series can be named `<verbose label>`,
+  // `<raw label>, <dims>`, `<raw label>__<offset>` or
   // `<raw label>__<offset>, <dims>`. Given a raw metric label, return the
   // `<offset>|<dims>` key for a series name belonging to that metric, or
   // undefined if the name doesn't belong to it. Keying by offset pairs each
-  // comparison value series with the size series from the same offset.
-  const timeCompareOffsets = ensureIsArray(timeCompare).map(String);
+  // comparison value series with the size series and the tooltip-only values
+  // from the same offset.
   const matchSeriesKey = (
     name: string,
     rawLabel: string,
   ): string | undefined => {
+    const verboseLabel = verboseMap[rawLabel] ?? rawLabel;
     const candidates = [
-      { label: verboseMap[rawLabel] ?? rawLabel, offset: '' },
+      { label: verboseLabel, offset: '' },
+      ...(verboseLabel !== rawLabel ? [{ label: rawLabel, offset: '' }] : []),
       ...timeCompareOffsets.map(offset => ({
         label: `${rawLabel}__${offset}`,
         offset,
@@ -978,10 +1035,50 @@ export default function transformProps(
       sizeExtent = [sizeMin, sizeMax];
     }
   }
+  // The dimension values of a series, read from its `label_map` tuple, whose
+  // trailing parts are always the dimension values.
+  const getSeriesDims = (name: string): string[] =>
+    groupBy.length > 0 ? (labelMap[name] ?? []).slice(-groupBy.length) : [];
+  // `renameOperator` renames a plotted metric's comparison series to
+  // `<offset>[, <dims>]` when a single metric is plotted, and to
+  // `<metric>, <offset>[, <dims>]` when several are, so neither carries the
+  // `<metric>__<offset>` form matchSeriesKey reads. Return the offset of such
+  // a renamed comparison series, or undefined for any other series. Only
+  // series recorded in `derivedComparisonSeries` are considered, so a base
+  // series whose dimension value reads like an offset is never mistaken for
+  // one.
+  const getRenamedComparisonOffset = (name: string): string | undefined => {
+    if (!derivedComparisonSeries.has(name)) {
+      return undefined;
+    }
+    const dims = getSeriesDims(name);
+    const dimsSuffix = dims.length ? `, ${dims.join(', ')}` : '';
+    const leading =
+      dimsSuffix && name.endsWith(dimsSuffix)
+        ? name.slice(0, -dimsSuffix.length)
+        : name;
+    // longest first, so an offset that ends another offset's label can't
+    // shadow it
+    return [...timeCompareOffsets]
+      .sort((a, b) => b.length - a.length)
+      .find(
+        offset =>
+          leading === offset ||
+          leading.endsWith(`, ${offset}`) ||
+          // a renamed label that would collide with a metric's own label keeps
+          // the `<metric>__<offset>` column name instead
+          leading.endsWith(`__${offset}`),
+      );
+  };
   // Strips the metric label off a series name, leaving the `<offset>|<dims>`
-  // key used to match a value series with its size series.
+  // key used to match a value series with its size series and with the
+  // tooltip-only values of the same dimensions and time offset.
   const rawValueMetricLabels = ensureIsArray(metrics).map(getMetricLabel);
   const getSeriesDimsKey = (name: string): string => {
+    const renamedOffset = getRenamedComparisonOffset(name);
+    if (renamedOffset !== undefined) {
+      return `${renamedOffset}|${getSeriesDims(name).join(', ')}`;
+    }
     for (const rawLabel of rawValueMetricLabels) {
       const key = matchSeriesKey(name, rawLabel);
       if (key !== undefined) {
@@ -990,6 +1087,62 @@ export default function transformProps(
     }
     return `|${name}`;
   };
+  // The original value of every tooltip-only metric, looked up by raw metric
+  // label, then `<offset>|<dims>` series key (see getSeriesDimsKey), then
+  // `String(<x-axis value>)`. Values are read before the percent-change
+  // rebase, so the tooltip always shows the metric's own numbers. Forecast
+  // trend and bounds are left out, and null and non-finite values are
+  // skipped while zeros are kept.
+  const tooltipXAxisColumn = xAxisLabel || DTTM_ALIAS;
+  const tooltipColumnKeys = new Map<
+    string,
+    { label: string; seriesKey: string }
+  >();
+  new Set(forecastRebasedData.flatMap(row => Object.keys(row))).forEach(
+    column => {
+      if (
+        column === tooltipXAxisColumn ||
+        extractForecastSeriesContext(column).type !==
+          ForecastSeriesEnum.Observation
+      ) {
+        return;
+      }
+      const label = tooltipOnlyMetricLabels.find(candidate =>
+        belongsToMetric(column, candidate),
+      );
+      const seriesKey =
+        label === undefined ? undefined : matchSeriesKey(column, label);
+      if (label !== undefined && seriesKey !== undefined) {
+        tooltipColumnKeys.set(column, { label, seriesKey });
+      }
+    },
+  );
+  const tooltipValues: TooltipValues = new Map();
+  forecastRebasedData.forEach(row => {
+    const rawXValue = row[tooltipXAxisColumn];
+    // a null category is plotted as NULL_STRING (see extractSeries), so the
+    // tooltip reports that as its axis value
+    const xKey = String(
+      rawXValue === null && xAxisType === AxisType.Category
+        ? NULL_STRING
+        : rawXValue,
+    );
+    tooltipColumnKeys.forEach(({ label, seriesKey }, column) => {
+      const rawValue = row[column];
+      const value = typeof rawValue === 'bigint' ? Number(rawValue) : rawValue;
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return;
+      }
+      if (!tooltipValues.has(label)) {
+        tooltipValues.set(label, new Map());
+      }
+      const bySeries = tooltipValues.get(label)!;
+      if (!bySeries.has(seriesKey)) {
+        bySeries.set(seriesKey, new Map());
+      }
+      bySeries.get(seriesKey)!.set(xKey, value);
+    });
+  });
   // Normalize the configured dot size range so an inverted min/max still
   // scales larger metric values to larger dots.
   const markerSizeRange: [number, number] =
@@ -1101,6 +1254,20 @@ export default function transformProps(
     data,
     currencyCodeColumn,
   );
+  // Display label and formatter of each tooltip-only metric, built once since
+  // the tooltip formatter runs on every mousemove. Each metric keeps its own
+  // format, even when the plotted values are shown as percentages.
+  const tooltipMetricSpecs = createTooltipMetricSpecs({
+    tooltipMetrics: tooltipOnlyMetrics,
+    verboseMap,
+    columnFormats,
+    currencyFormats,
+    yAxisFormat,
+    currencyFormat,
+    backendDetectedCurrency,
+    data,
+    currencyCodeColumn,
+  });
 
   const array = ensureIsArray(chartProps.rawFormData?.time_compare);
   const inverted = invert(verboseMap);
@@ -2079,7 +2246,6 @@ export default function transformProps(
           ? percentFormatter
           : (getCustomFormatter(customFormatters, metrics) ?? defaultFormatter);
 
-        const rows: string[][] = [];
         const total = Object.values(filteredForecastValues).reduce(
           (acc, value) =>
             value.observation !== undefined ? acc + value.observation : acc,
@@ -2089,7 +2255,10 @@ export default function transformProps(
         const showPercentage =
           allowTotal && !forcePercentFormatter && showTooltipPercentage;
         const keys = Object.keys(forecastValues);
-        let focusedRow;
+        // Each plotted row is grouped with the tooltip-only rows shown
+        // directly beneath it.
+        const rowGroups: string[][][] = [];
+        let focusedGroup: number | undefined;
         sortedKeys
           .filter(key => keys.includes(key))
           .forEach(key => {
@@ -2118,17 +2287,38 @@ export default function transformProps(
                 percentFormatter.format(value.observation / (total || 1)),
               );
             }
-            rows.push(row);
+            rowGroups.push([
+              row,
+              ...(annotationRow
+                ? []
+                : getTooltipMetricRows(
+                    tooltipMetricSpecs,
+                    tooltipValues,
+                    getSeriesDimsKey(key),
+                    xValue,
+                  )),
+            ]);
             if (key === focusedSeries) {
-              focusedRow = rows.length - 1;
+              focusedGroup = rowGroups.length - 1;
             }
           });
+        // Stacked charts list the topmost series first. Whole groups are
+        // reversed, not single rows, so tooltip-only rows stay beneath their
+        // plotted row.
         if (stack) {
-          rows.reverse();
-          if (focusedRow !== undefined) {
-            focusedRow = rows.length - focusedRow - 1;
+          rowGroups.reverse();
+          if (focusedGroup !== undefined) {
+            focusedGroup = rowGroups.length - focusedGroup - 1;
           }
         }
+        const rows: string[][] = [];
+        let focusedRow: number | undefined;
+        rowGroups.forEach((group, groupIndex) => {
+          if (groupIndex === focusedGroup) {
+            focusedRow = rows.length;
+          }
+          rows.push(...group);
+        });
         if (allowTotal && showTooltipTotal) {
           const totalRow = ['Total', formatter.format(total)];
           if (showPercentage) {

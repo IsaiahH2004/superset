@@ -139,3 +139,64 @@ test('should not restrict columns when no metric is sort-only', () => {
     options: { orientation: 'row' },
   });
 });
+
+const tooltipFormData: SqlaFormData = {
+  ...formData,
+  metrics: ['count'],
+  groupby: ['platform'],
+  x_axis: 'ds',
+  contributionMode: 'row',
+  tooltip_metrics: ['sales'],
+};
+
+test('should leave tooltip-only metrics out of the row contribution', () => {
+  expect(contributionOperator(tooltipFormData, sortByQueryObject)).toEqual({
+    operation: 'contribution',
+    options: { orientation: 'row', columns: ['count'] },
+  });
+});
+
+test('should leave tooltip-only metrics out of the series contribution', () => {
+  expect(
+    contributionOperator(
+      { ...tooltipFormData, contributionMode: 'column' },
+      sortByQueryObject,
+    ),
+  ).toEqual({
+    operation: 'contribution',
+    options: { orientation: 'column', columns: ['count'] },
+  });
+});
+
+test('should leave tooltip-only metrics out with time comparison values', () => {
+  expect(
+    contributionOperator(
+      {
+        ...tooltipFormData,
+        time_compare: ['1 year ago'],
+        comparison_type: ComparisonType.Values,
+      },
+      sortByQueryObject,
+      ['1 year ago'],
+    ),
+  ).toEqual({
+    operation: 'contribution',
+    options: {
+      orientation: 'row',
+      time_shifts: ['1 year ago'],
+      columns: ['count', 'count__1 year ago'],
+    },
+  });
+});
+
+test('should not restrict columns when every tooltip metric is plotted', () => {
+  expect(
+    contributionOperator(
+      { ...tooltipFormData, tooltip_metrics: ['count'] },
+      sortByQueryObject,
+    ),
+  ).toEqual({
+    operation: 'contribution',
+    options: { orientation: 'row' },
+  });
+});
