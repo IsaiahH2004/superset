@@ -18,18 +18,16 @@
  */
 
 import {
-  buildCustomFormatters,
+  type Currency,
   CurrencyFormatter,
-  getCustomFormatter,
   getMetricLabel,
   getNumberFormatter,
+  isSavedMetric,
+  type QueryFormMetric,
   resolveAutoCurrency,
+  type TimeseriesDataRecord,
 } from '@superset-ui/core';
-import type {
-  Currency,
-  QueryFormMetric,
-  TimeseriesDataRecord,
-} from '@superset-ui/core';
+import { format as echartsFormat } from 'echarts/core';
 
 export type TooltipMetricSpec = {
   key: string;
@@ -44,6 +42,8 @@ export type CreateTooltipMetricSpecsOptions = {
   verboseMap?: Record<string, string>;
   columnFormats?: Record<string, string>;
   currencyFormats?: Record<string, Currency>;
+  // transformProps also passes the plotted axis options. Tooltip-only
+  // metrics have independent units, so neither option formats these rows.
   yAxisFormat?: string;
   currencyFormat?: Currency;
   backendDetectedCurrency?: string | null;
@@ -61,43 +61,36 @@ export function createTooltipMetricSpecs({
   verboseMap = {},
   columnFormats = {},
   currencyFormats = {},
-  yAxisFormat,
-  currencyFormat,
   backendDetectedCurrency,
   data,
   currencyCodeColumn,
 }: CreateTooltipMetricSpecsOptions): TooltipMetricSpec[] {
-  const resolvedCurrency = resolveAutoCurrency(
-    currencyFormat,
-    backendDetectedCurrency,
-    data,
-    currencyCodeColumn,
-  );
-  const defaultFormatter = resolvedCurrency?.symbol
-    ? new CurrencyFormatter({
-        d3Format: yAxisFormat,
-        currency: resolvedCurrency,
-      })
-    : getNumberFormatter(yAxisFormat);
-  const customFormatters = buildCustomFormatters(
-    tooltipMetrics,
-    currencyFormats,
-    columnFormats,
-    yAxisFormat,
-    resolvedCurrency,
-    data,
-    currencyCodeColumn,
-  );
-
   return tooltipMetrics.map(metric => {
     const key = getMetricLabel(metric);
-    const formatter =
-      getCustomFormatter(customFormatters, [metric], key) ?? defaultFormatter;
+    // Saved formats belong to dataset metrics. An ad hoc expression can
+    // have the same label as a saved metric while measuring something else.
+    const saved = isSavedMetric(metric);
+    const d3Format =
+      saved && Object.hasOwn(columnFormats, key)
+        ? columnFormats[key]
+        : undefined;
+    const currency =
+      saved && Object.hasOwn(currencyFormats, key)
+        ? resolveAutoCurrency(
+            currencyFormats[key],
+            backendDetectedCurrency,
+            data,
+            currencyCodeColumn,
+          )
+        : undefined;
 
     return {
       key,
-      label: verboseMap[key] ?? key,
-      format: value => formatter(value),
+      label:
+        saved && Object.hasOwn(verboseMap, key) ? verboseMap[key] || key : key,
+      format: currency?.symbol
+        ? new CurrencyFormatter({ d3Format, currency })
+        : getNumberFormatter(d3Format),
     };
   });
 }
@@ -114,10 +107,16 @@ export function getTooltipMetricRows(
 ): string[][] {
   const xKey = String(xValue);
 
-  return metricSpecs.flatMap(spec => {
-    const value = tooltipValues.get(spec.key)?.get(seriesKey)?.get(xKey);
-    return typeof value === 'number' && Number.isFinite(value)
-      ? [[spec.label, spec.format(value)]]
-      : [];
-  });
+  const rows: string[][] = [];
+  for (const { key, label, format } of metricSpecs) {
+    const value = tooltipValues.get(key)?.get(seriesKey)?.get(xKey);
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      // tooltipHtml treats cells as HTML, so insert labels and numbers as text.
+      rows.push([
+        echartsFormat.encodeHTML(label),
+        echartsFormat.encodeHTML(format(value)),
+      ]);
+    }
+  }
+  return rows;
 }

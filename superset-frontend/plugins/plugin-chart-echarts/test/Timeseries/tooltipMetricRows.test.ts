@@ -21,12 +21,104 @@ import {
   createTooltipMetricSpecs,
   getTooltipMetricRows,
 } from '../../src/Timeseries/tooltipMetricRows';
+import { tooltipHtml } from '@superset-ui/core';
 import type {
   TooltipMetricSpec,
   TooltipValues,
 } from '../../src/Timeseries/tooltipMetricRows';
 
 const xValue = 1_700_000_000_000;
+
+test.each([
+  { currencyFormat: { symbol: 'USD', symbolPosition: 'prefix' } },
+  { yAxisFormat: '.0%' },
+])(
+  'uses plain numbers for an ad hoc quantity with chart settings %j',
+  chart => {
+    const [quantity] = createTooltipMetricSpecs({
+      ...chart,
+      tooltipMetrics: [
+        {
+          expressionType: 'SIMPLE',
+          aggregate: 'SUM',
+          column: { column_name: 'quantity_ordered' },
+        },
+      ],
+    });
+    expect(quantity.key).toBe('SUM(quantity_ordered)');
+    expect(quantity.format(1234)).toBe('1.23k');
+  },
+);
+
+test('preserves a saved ratio with the chart default Y-axis format', () => {
+  const [ratio] = createTooltipMetricSpecs({
+    tooltipMetrics: ['ratio'],
+    columnFormats: { ratio: '.1%' },
+    yAxisFormat: 'SMART_NUMBER',
+  });
+  expect(ratio.format(0.123)).toBe('12.3%');
+});
+
+test('an ad hoc expression keeps its own label when a dataset metric has the same name', () => {
+  const [count] = createTooltipMetricSpecs({
+    tooltipMetrics: [
+      { expressionType: 'SQL', sqlExpression: 'COUNT(*)', label: 'total' },
+    ],
+    verboseMap: { total: 'Total cost' },
+    currencyFormats: { total: { symbol: 'USD', symbolPosition: 'prefix' } },
+    columnFormats: { total: '.2f' },
+  });
+  expect(count.label).toBe('total');
+  expect(count.format(8)).toBe('8');
+});
+
+test('keeps the units of each tooltip metric with both chart overrides', () => {
+  const specs = createTooltipMetricSpecs({
+    tooltipMetrics: ['cost', 'share', 'count'],
+    columnFormats: { cost: ',.2f', share: '.1%' },
+    currencyFormats: { cost: { symbol: 'EUR', symbolPosition: 'suffix' } },
+    yAxisFormat: '.0%',
+    currencyFormat: { symbol: 'USD', symbolPosition: 'prefix' },
+  });
+
+  const values: TooltipValues = new Map([
+    ['cost', new Map([['|', new Map([['Q1', 1234.5]])]])],
+    ['share', new Map([['|', new Map([['Q1', 0.123]])]])],
+    ['count', new Map([['|', new Map([['Q1', 0]])]])],
+  ]);
+  expect(getTooltipMetricRows(specs, values, '|', 'Q1')).toEqual([
+    ['cost', '1,234.50 €'],
+    ['share', '12.3%'],
+    ['count', '0'],
+  ]);
+});
+
+test('resolves detected currency only for a metric whose saved currency is AUTO', () => {
+  const [price, units] = createTooltipMetricSpecs({
+    tooltipMetrics: ['price', 'units'],
+    columnFormats: { price: '.2f' },
+    currencyFormats: { price: { symbol: 'AUTO', symbolPosition: 'prefix' } },
+    backendDetectedCurrency: 'GBP',
+    currencyFormat: { symbol: 'AUTO', symbolPosition: 'prefix' },
+  });
+  expect(price.format(12)).toBe('£ 12.00');
+  expect(units.format(12)).toBe('12');
+});
+
+test('uses the saved numeric precision when AUTO has mixed currency codes', () => {
+  const [price] = createTooltipMetricSpecs({
+    tooltipMetrics: ['price'],
+    columnFormats: { price: '.2f' },
+    currencyFormats: { price: { symbol: 'AUTO', symbolPosition: 'prefix' } },
+    currencyCodeColumn: 'code',
+    data: [
+      { __timestamp: xValue, code: 'USD' },
+      { __timestamp: xValue + 1, code: 'EUR' },
+    ],
+    currencyFormat: { symbol: 'USD', symbolPosition: 'prefix' },
+  });
+  expect(price.format(12)).toBe('12.00');
+});
 
 test('creates metric-specific number and currency formatters with verbose labels', () => {
   const specs = createTooltipMetricSpecs({
@@ -109,6 +201,31 @@ test('skips missing and non-finite values', () => {
   ]);
 
   expect(getTooltipMetricRows(specs, values, '|East', xValue)).toEqual([]);
+});
+
+test('returns no rows for an unselected metric, unknown group, or different x value', () => {
+  const specs = createTooltipMetricSpecs({ tooltipMetrics: ['units'] });
+  const values: TooltipValues = new Map([
+    ['units', new Map([['|East', new Map([['Q1', 17]])]])],
+  ]);
+  expect(getTooltipMetricRows([], values, '|East', 'Q1')).toEqual([]);
+  expect(getTooltipMetricRows(specs, values, '|West', 'Q1')).toEqual([]);
+  expect(getTooltipMetricRows(specs, values, '|East', 'Q2')).toEqual([]);
+});
+
+test('displays a custom metric label literally in the rendered tooltip', () => {
+  const label = 'Orders <target> & pending';
+  const specs = createTooltipMetricSpecs({
+    tooltipMetrics: [
+      { expressionType: 'SQL', sqlExpression: 'COUNT(*)', label },
+    ],
+  });
+  const values: TooltipValues = new Map([
+    [label, new Map([['|', new Map([['Q1', 7]])]])],
+  ]);
+  const table = document.createElement('div');
+  table.innerHTML = tooltipHtml(getTooltipMetricRows(specs, values, '|', 'Q1'));
+  expect(table.querySelector('td')?.textContent).toBe(label);
 });
 
 test('formats the original lookup value instead of a contribution percentage', () => {
