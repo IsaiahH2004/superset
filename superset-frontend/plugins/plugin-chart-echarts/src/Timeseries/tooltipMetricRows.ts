@@ -26,6 +26,8 @@ import {
   type QueryFormMetric,
   resolveAutoCurrency,
   type TimeseriesDataRecord,
+  type TooltipTruncationMode,
+  truncateLabel,
 } from '@superset-ui/core';
 import { format as echartsFormat } from 'echarts/core';
 
@@ -42,6 +44,7 @@ export type CreateTooltipMetricSpecsOptions = {
   verboseMap?: Record<string, string>;
   columnFormats?: Record<string, string>;
   currencyFormats?: Record<string, Currency>;
+  tooltipTruncation?: TooltipTruncationMode;
   // transformProps also passes the plotted axis options. Tooltip-only
   // metrics have independent units, so neither option formats these rows.
   yAxisFormat?: string;
@@ -61,6 +64,7 @@ export function createTooltipMetricSpecs({
   verboseMap = {},
   columnFormats = {},
   currencyFormats = {},
+  tooltipTruncation,
   backendDetectedCurrency,
   data,
   currencyCodeColumn,
@@ -84,10 +88,11 @@ export function createTooltipMetricSpecs({
           )
         : undefined;
 
+    const displayLabel =
+      saved && Object.hasOwn(verboseMap, key) ? verboseMap[key] || key : key;
     return {
       key,
-      label:
-        saved && Object.hasOwn(verboseMap, key) ? verboseMap[key] || key : key,
+      label: truncateLabel(displayLabel, tooltipTruncation),
       format: currency?.symbol
         ? new CurrencyFormatter({ d3Format, currency })
         : getNumberFormatter(d3Format),

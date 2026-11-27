@@ -29,6 +29,32 @@ import type {
 
 const xValue = 1_700_000_000_000;
 
+test.each(['start', 'middle', 'end', 'off'] as const)(
+  'respects %s label truncation without changing the lookup key or value',
+  mode => {
+    const label = 'Units <North> sold by the regional distribution center';
+    const specs = createTooltipMetricSpecs({
+      tooltipMetrics: ['units'],
+      verboseMap: { units: label },
+      tooltipTruncation: mode,
+    });
+    const values: TooltipValues = new Map([
+      ['units', new Map([['|', new Map([['Q1', 7]])]])],
+    ]);
+    const el = document.createElement('div');
+    el.innerHTML = tooltipHtml(getTooltipMetricRows(specs, values, '|', 'Q1'));
+    const expectedLabel = {
+      start: `…${label.slice(-39)}`,
+      middle: `${label.slice(0, 20)}…${label.slice(-19)}`,
+      end: label,
+      off: label,
+    }[mode];
+    expect(
+      [...el.querySelectorAll('td')].map(cell => cell.textContent),
+    ).toEqual([expectedLabel, '7']);
+  },
+);
+
 test.each([
   { currencyFormat: { symbol: 'USD', symbolPosition: 'prefix' } },
   { yAxisFormat: '.0%' },
